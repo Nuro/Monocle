@@ -10,7 +10,7 @@ from array import typecodes
 from queue import Empty
 from aiohttp import ClientSession
 
-from .db import SIGHTING_CACHE, MYSTERY_CACHE, Bounds
+from .db import SIGHTING_CACHE, MYSTERY_CACHE, FORT_CACHE, Bounds
 from .utils import random_sleep, round_coords, load_pickle, load_accounts, get_device_info, get_spawn_id, get_distance, get_start_coords, Units, randomize_point
 from . import config, shared
 
@@ -828,28 +828,36 @@ class Worker:
                         if not cooldown or time() > cooldown / 1000:
                             await self.spin_pokestop(pokestop)
                 else:
-                    request = self.api.create_request()
-                    request.get_gym_details(gym_id=fort['id'],
-                                            player_latitude=latitude,
-                                            player_longitude=longitude,
-                                            gym_latitude=fort['latitude'],
-                                            gym_longitude=fort['longitude']
-                                            )
-                    responses = await self.call(request)
+                    if not self.normalize_gym(fort) in FORT_CACHE:
+                        request = self.api.create_request()
+                        request.get_gym_details(gym_id=fort['id'],
+                                                player_latitude=latitude,
+                                                player_longitude=longitude,
+                                                gym_latitude=fort['latitude'],
+                                                gym_longitude=fort['longitude']
+                                                )
+                        responses = await self.call(request)
 
-                    get_gym_details = responses['GET_GYM_DETAILS']
-                    # self.log.warning("Gym name {}", get_gym_details['name'])
-                    fort['name'] = get_gym_details['name']
-                    shared.DB.add(self.normalize_gym(fort))
-                    for member in get_gym_details['gym_state']['memberships']:
-                        rowDetail = {}
-                        rowDetail['id'] = fort['id']
-                        rowDetail['player_name'] = member['trainer_public_profile']['name']
-                        rowDetail['player_level'] = member['trainer_public_profile']['level']
-                        rowDetail['pokemon_id'] = member['pokemon_data']['pokemon_id']
-                        rowDetail['pokemon_cp'] = member['pokemon_data']['cp']
-                        rowDetail['last_modified_timestamp_ms'] = fort['last_modified_timestamp_ms']
-                        shared.DB.add(self.normalize_gym_detail(rowDetail))
+                        result = responses.get('GET_GYM_DETAILS', {}).get('status', 0)
+                        if result == 1:
+                            self.log.debug('Get Gym Detail #{}.', fort['id'])
+                            try:
+                                get_gym_details = responses['GET_GYM_DETAILS']
+                                fort['name'] = get_gym_details['name']
+                                shared.DB.add(self.normalize_gym(fort))
+                                for member in get_gym_details['gym_state']['memberships']:
+                                    rowDetail = {}
+                                    rowDetail['id'] = fort['id']
+                                    rowDetail['player_name'] = member['trainer_public_profile']['name']
+                                    rowDetail['player_level'] = member['trainer_public_profile']['level']
+                                    rowDetail['pokemon_id'] = member['pokemon_data']['pokemon_id']
+                                    rowDetail['pokemon_cp'] = member['pokemon_data']['cp']
+                                    rowDetail['last_modified_timestamp_ms'] = fort['last_modified_timestamp_ms']
+                                    shared.DB.add(self.normalize_gym_detail(rowDetail))
+                            except KeyError:
+                                self.log.error('Missing Gym Detail response.')
+                        else :
+                            self.log.debug('Failed getting Gym Detail #{}.', fort['id'])
 
             if config.MORE_POINTS or bootstrap:
                 for point in map_cell.get('spawn_points', []):
