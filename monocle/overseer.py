@@ -19,7 +19,7 @@ try:
 except ImportError:
     import _dummy_thread as _thread
 
-from .db import SIGHTING_CACHE, MYSTERY_CACHE, FORT_CACHE
+from .db import SIGHTING_CACHE, MYSTERY_CACHE, FORT_CACHE, FORT_DETAIL_CACHE
 from .utils import get_current_hour, dump_pickle, get_start_coords, get_bootstrap_points, randomize_point
 
 from . import config, shared
@@ -618,6 +618,7 @@ class Overseer:
             worker.kill()
 
         FORT_CACHE.pickle()
+        FORT_DETAIL_CACHE.pickle()
 
         while not self.extra_queue.empty():
             account = self.extra_queue.get()

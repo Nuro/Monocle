@@ -233,10 +233,29 @@ class FortCache(object):
     def pickle(self):
         utils.dump_pickle('forts', self.store)
 
+class FortDetailCache(object):
+    """Simple cache for storing fort sightings"""
+    def __init__(self):
+        self.store = utils.load_pickle('forts_detail') or {}
+
+    def add(self, sighting):
+        self.store[str(sighting['external_id']) + sighting['player_name']] = sighting['last_modified']
+
+    def __contains__(self, sighting):
+        existing = self.store.get(str(sighting['last_modified']) + sighting['player_name'])
+        if not existing:
+            return False
+        if existing is True:
+            return True
+        return existing == (str(sighting['last_modified']) + sighting['player_name'])
+
+    def pickle(self):
+        utils.dump_pickle('forts_detail', self.store)
 
 SIGHTING_CACHE = SightingCache()
 MYSTERY_CACHE = MysteryCache()
 FORT_CACHE = FortCache()
+FORT_DETAIL_CACHE = FortDetailCache()
 
 
 class Sighting(Base):
@@ -319,12 +338,33 @@ class Fort(Base):
         order_by='FortSighting.last_modified'
     )
 
+class FortDetail(Base):
+    __tablename__ = 'fort_detail'
+
+    id = Column(Integer, primary_key=True)
+    external_id = Column(String(35), ForeignKey('forts.external_id'))
+    player_name = Column(String(100), index=True)
+    player_level = Column(Integer)
+    pokemon_id = Column(Integer)
+    pokemon_cp = Column(Integer)
+    last_modified = Column(Integer, index=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            'external_id',
+            'last_modified',
+            'player_name',
+            name='fort_id_last_modified_unique'
+        ),
+    )
+
 
 class FortSighting(Base):
     __tablename__ = 'fort_sightings'
 
     id = Column(Integer, primary_key=True)
     fort_id = Column(Integer, ForeignKey('forts.id'))
+    name = Column(TINY_TYPE)
     last_modified = Column(Integer, index=True)
     team = Column(TINY_TYPE)
     prestige = Column(MEDIUM_TYPE)
@@ -337,7 +377,6 @@ class FortSighting(Base):
             name='fort_id_last_modified_unique'
         ),
     )
-
 
 class Pokestop(Base):
     __tablename__ = 'pokestops'
@@ -579,10 +618,35 @@ def add_fort_sighting(session, raw_fort):
         team=raw_fort['team'],
         prestige=raw_fort['prestige'],
         guard_pokemon_id=raw_fort['guard_pokemon_id'],
+        name=raw_fort['name'],
         last_modified=raw_fort['last_modified'],
     )
     session.add(obj)
     FORT_CACHE.add(raw_fort)
+
+def add_fort_detail_sighting(session, raw_fort_detail):
+    if raw_fort_detail in FORT_DETAIL_CACHE:
+        return
+	
+    existing = session.query(exists().where(and_(
+        FortDetail.external_id == raw_fort_detail['external_id'],
+        FortDetail.last_modified == raw_fort_detail['last_modified'],
+        FortDetail.player_name == raw_fort_detail['player_name']
+    ))).scalar()
+    if existing:
+        # Why is it not in the cache? It should be there!
+        FORT_DETAIL_CACHE.add(raw_fort_detail)
+        return
+    obj = FortDetail(
+        external_id=raw_fort_detail['external_id'],
+        player_name=raw_fort_detail['player_name'],
+        player_level=raw_fort_detail['player_level'],
+        pokemon_id=raw_fort_detail['pokemon_id'],
+        pokemon_cp=raw_fort_detail['pokemon_cp'],
+        last_modified=raw_fort_detail['last_modified'],
+    )
+    session.add(obj)
+    FORT_DETAIL_CACHE.add(raw_fort_detail)
 
 
 def add_pokestop(session, raw_pokestop):
@@ -654,6 +718,7 @@ def get_forts(session):
             fs.team,
             fs.prestige,
             fs.guard_pokemon_id,
+            fs.name,
             fs.last_modified,
             f.lat,
             f.lon
